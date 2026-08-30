@@ -300,8 +300,38 @@ const server = http.createServer(async (req, res) => {
       activeDownloadsCount = Math.max(0, activeDownloadsCount - 1);
     };
 
-    child.on('close', (code) => {
+    child.on('close', async (code) => {
       if (code !== 0 || !fs.existsSync(tempFile)) {
+        console.warn('yt-dlp failed (datacenter IP block). Attempting Cobalt API fallback for:', videoUrl);
+        try {
+          const cobaltRes = await fetch('https://api.cobalt.tools/', {
+            method: 'POST',
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              url: videoUrl,
+              downloadMode: kind === 'audio' ? 'audio' : 'auto',
+              audioFormat: format === 'mp3' ? 'mp3' : 'm4a',
+              youtubeVideoCodec: 'h264'
+            })
+          });
+          const cobaltJson = await cobaltRes.json();
+          if (cobaltJson && cobaltJson.url) {
+            console.log('Cobalt fallback success:', cobaltJson.url);
+            downloadProgressMap[jobId] = { percent: 100, status: 'done' };
+            finishDownload();
+            if (!res.headersSent) {
+              res.writeHead(302, { 'Location': cobaltJson.url });
+              res.end();
+            }
+            return;
+          }
+        } catch (cobaltErr) {
+          console.error('Cobalt fallback failed:', cobaltErr);
+        }
+
         console.error('yt-dlp download failed with code:', code, 'stderr:', stderrLogs);
         downloadProgressMap[jobId] = { percent: 0, status: 'error' };
         finishDownload();
