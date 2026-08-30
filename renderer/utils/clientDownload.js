@@ -13,17 +13,18 @@ export async function downloadClientSideDirect({ url, title, kind, format, quali
 
   const downloadUrl = getApiUrl(`/api/download?url=${encodeURIComponent(url)}&kind=${kind}&format=${fileExt}&quality=${quality || 'highest'}&title=${encodeURIComponent(safeTitle)}`)
 
-  if (onProgress) onProgress(40, '미디어 병합 및 스트리밍 다운로드 시작...')
+  if (onProgress) onProgress(50, '서버에서 파일 생성 및 다운로드 전송 시작...')
 
-  // Trigger silent browser download via hidden iframe
-  let iframe = document.getElementById('maehwa_hidden_download_iframe')
-  if (!iframe) {
-    iframe = document.createElement('iframe')
-    iframe.id = 'maehwa_hidden_download_iframe'
-    iframe.style.display = 'none'
-    document.body.appendChild(iframe)
-  }
-  iframe.src = downloadUrl
+  // Trigger universal cross-device download (mobile safari/chrome & desktop)
+  const a = document.createElement('a')
+  a.href = downloadUrl
+  a.download = `${safeTitle}.${fileExt}`
+  a.target = '_self'
+  document.body.appendChild(a)
+  a.click()
+  setTimeout(() => {
+    try { document.body.removeChild(a) } catch (e) {}
+  }, 1000)
 
   if (onProgress) onProgress(100, '다운로드가 성공적으로 시작되었습니다!')
   return { ok: true }
