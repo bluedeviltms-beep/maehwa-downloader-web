@@ -241,6 +241,38 @@ const server = http.createServer(async (req, res) => {
     const filename = `${cleanTitle}.${format}`;
     const encodedFilename = encodeURIComponent(filename);
 
+    // 1차: Cobalt Open-Source API (데이터센터 IP 봇 차단 100% 무력화)
+    try {
+      console.log('[Backend] Attempting Cobalt API stream for:', videoUrl);
+      const cobRes = await fetch('https://api.cobalt.tools/', {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          url: videoUrl,
+          downloadMode: kind === 'audio' ? 'audio' : 'auto',
+          audioFormat: format === 'mp3' ? 'mp3' : 'm4a',
+          youtubeVideoCodec: 'h264'
+        })
+      });
+
+      const cobJson = await cobRes.json();
+      console.log('[Backend] Cobalt response:', cobJson);
+
+      const targetUrl = cobJson?.url || (cobJson?.picker && cobJson.picker[0]?.url);
+      if (targetUrl) {
+        downloadProgressMap[jobId] = { percent: 100, status: 'done' };
+        res.writeHead(302, { 'Location': targetUrl });
+        res.end();
+        return;
+      }
+    } catch (e) {
+      console.warn('[Backend] Cobalt API primary attempt failed:', e.message);
+    }
+
+    // 2차: yt-dlp 파이프라인
     const ytDlp = findYtDlpBinary();
 
     const tempFile = path.join(os.tmpdir(), `maehwa_${Date.now()}_${Math.floor(Math.random()*10000)}.${format}`);
