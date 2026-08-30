@@ -243,25 +243,28 @@ const server = http.createServer(async (req, res) => {
 
     const tempFile = path.join(os.tmpdir(), `maehwa_${Date.now()}_${Math.floor(Math.random()*10000)}.${format}`);
 
-    const args = ['--no-playlist', '--newline', '-o', tempFile];
+    const args = [
+      '--no-playlist',
+      '--newline',
+      '--no-check-certificates',
+      '--geo-bypass',
+      '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      '-o', tempFile
+    ];
 
     if (kind === 'audio') {
-      if (format === 'mp3') {
-        args.push('-x', '--audio-format', 'mp3', '--audio-quality', '0');
-      } else {
-        args.push('-f', 'ba[ext=m4a]/ba/bestaudio');
-      }
+      args.push('-x', '--audio-format', format === 'mp3' ? 'mp3' : 'm4a');
     } else {
       let formatSpec = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best';
       if (quality === '1080p') {
-        formatSpec = 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best';
+        formatSpec = 'bestvideo[height<=1080]+bestaudio/best';
       } else if (quality === '720p') {
-        formatSpec = 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]/best';
+        formatSpec = 'bestvideo[height<=720]+bestaudio/best';
       } else if (quality === '480p') {
-        formatSpec = 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480]/best';
+        formatSpec = 'bestvideo[height<=480]+bestaudio/best';
       }
       args.push('-f', formatSpec);
-      args.push('--merge-output-format', format);
+      args.push('--merge-output-format', 'mp4');
     }
     args.push(videoUrl);
 
@@ -269,6 +272,7 @@ const server = http.createServer(async (req, res) => {
     activeDownloadsCount++;
 
     const child = cp.spawn(ytDlp, args);
+    let stderrLogs = '';
 
     child.stdout.on('data', (chunk) => {
       const lines = chunk.toString().split('\n');
@@ -277,13 +281,17 @@ const server = http.createServer(async (req, res) => {
         if (match && match[1]) {
           const p = Math.min(95, Math.round(parseFloat(match[1])));
           downloadProgressMap[jobId] = { percent: p, status: 'downloading' };
-        } else if (line.includes('[Merger]') || line.includes('Merging')) {
-          downloadProgressMap[jobId] = { percent: 97, status: 'merging' };
+        } else if (line.includes('[Merger]') || line.includes('Merging') || line.includes('[ExtractAudio]')) {
+          downloadProgressMap[jobId] = { percent: 97, status: 'processing' };
         }
       }
     });
 
-    child.stderr.on('data', (d) => console.log('yt-dlp err:', d.toString()));
+    child.stderr.on('data', (d) => {
+      const msg = d.toString();
+      stderrLogs += msg;
+      console.log('yt-dlp err:', msg);
+    });
 
     const finishDownload = () => {
       activeDownloadsCount = Math.max(0, activeDownloadsCount - 1);
@@ -291,12 +299,12 @@ const server = http.createServer(async (req, res) => {
 
     child.on('close', (code) => {
       if (code !== 0 || !fs.existsSync(tempFile)) {
-        console.error('yt-dlp download failed with code:', code);
+        console.error('yt-dlp download failed with code:', code, 'stderr:', stderrLogs);
         downloadProgressMap[jobId] = { percent: 0, status: 'error' };
         finishDownload();
         if (!res.headersSent) {
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Download failed during process execution' }));
+          res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ error: `다운로드 실패 (${stderrLogs.slice(-200) || 'code ' + code})` }));
         }
         return;
       }
