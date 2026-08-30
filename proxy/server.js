@@ -83,6 +83,79 @@ function decodeHTMLEntities(text) {
     .replace(/&gt;/g, '>')
     .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(Number(dec)))
     .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+async function getStreamUrlFromPublicApi(videoUrl, kind, format) {
+  const urlMatch = videoUrl.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
+  const videoId = urlMatch ? urlMatch[1] : null;
+
+  // 1. Try Cobalt API v10
+  try {
+    const cobRes = await fetch('https://api.cobalt.tools/', {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+      },
+      body: JSON.stringify({
+        url: videoUrl,
+        downloadMode: kind === 'audio' ? 'audio' : 'auto',
+        audioFormat: format === 'mp3' ? 'mp3' : 'm4a',
+        youtubeVideoCodec: 'h264'
+      })
+    });
+    const cobJson = await cobRes.json();
+    console.log('[Cobalt v10] Response:', cobJson);
+    if (cobJson && cobJson.url) return cobJson.url;
+    if (cobJson && cobJson.picker && cobJson.picker[0]?.url) return cobJson.picker[0].url;
+  } catch (e) {
+    console.warn('[Cobalt v10] Failed:', e.message);
+  }
+
+  // 2. Try Invidious & Piped Public Instances
+  if (videoId) {
+    const instances = [
+      `https://inv.tux.pizza/api/v1/videos/${videoId}`,
+      `https://invidious.nerdvpn.de/api/v1/videos/${videoId}`,
+      `https://pipedapi.kavin.rocks/streams/${videoId}`,
+      `https://api.piped.video/streams/${videoId}`
+    ];
+
+    for (const instUrl of instances) {
+      try {
+        const res = await fetch(instUrl, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+        });
+        if (!res.ok) continue;
+        const data = await res.json();
+
+        // Invidious formats
+        if (data.adaptiveFormats || data.formatStreams) {
+          if (kind === 'audio' && data.adaptiveFormats) {
+            const audio = data.adaptiveFormats.find(f => f.type?.includes('audio/mp4') || f.type?.includes('audio'));
+            if (audio && audio.url) return audio.url;
+          }
+          if (kind === 'video' && data.formatStreams) {
+            const video = data.formatStreams.find(f => f.qualityLabel?.includes('720p') || f.qualityLabel?.includes('360p')) || data.formatStreams[0];
+            if (video && video.url) return video.url;
+          }
+        }
+
+        // Piped formats
+        if (data.audioStreams && kind === 'audio') {
+          const audio = data.audioStreams.find(a => a.format === 'M4A' || a.mimeType?.includes('audio/mp4')) || data.audioStreams[0];
+          if (audio && audio.url) return audio.url;
+        }
+        if (data.videoStreams && kind === 'video') {
+          const video = data.videoStreams.find(v => v.videoOnly === false) || data.videoStreams[0];
+          if (video && video.url) return video.url;
+        }
+      } catch (e) {
+        console.warn('[Instance] Failed:', instUrl, e.message);
+      }
+    }
+  }
+
+  return null;
 }
 
 const server = http.createServer(async (req, res) => {
@@ -241,76 +314,18 @@ const server = http.createServer(async (req, res) => {
     const filename = `${cleanTitle}.${format}`;
     const encodedFilename = encodeURIComponent(filename);
 
-    // 1차: Multi-Instance Stream Engine (Piped/Invidious 인스턴스 다중 탐색 - 0.05초)
+    // 1차: 철통 무적 Multi-API Stream Engine (Cobalt v10 + Invidious + Piped)
     try {
-      const urlMatch = videoUrl.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
-      const vId = urlMatch ? urlMatch[1] : null;
-
-      if (vId) {
-        console.log('[Backend] Attempting Multi-Instance Stream Engine for vId:', vId);
-        const instances = [
-          `https://pipedapi.kavin.rocks/streams/${vId}`,
-          `https://api.piped.video/streams/${vId}`,
-          `https://pipedapi.adminforge.de/streams/${vId}`,
-          `https://inv.tux.pizza/api/v1/videos/${vId}`
-        ];
-
-        for (const apiUrl of instances) {
-          try {
-            console.log('[Backend] Trying API:', apiUrl);
-            const apiRes = await fetch(apiUrl, {
-              headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-            });
-            if (!apiRes.ok) continue;
-            const apiJson = await apiRes.json();
-
-            if (kind === 'audio' && apiJson.audioStreams && apiJson.audioStreams.length > 0) {
-              const bestAudio = apiJson.audioStreams.find(a => a.format === 'M4A' || a.mimeType?.includes('audio/mp4')) || apiJson.audioStreams[0];
-              if (bestAudio && bestAudio.url) {
-                console.log('[Backend] Stream fetch success via:', apiUrl);
-                downloadProgressMap[jobId] = { percent: 100, status: 'done' };
-                res.writeHead(302, { 'Location': bestAudio.url });
-                res.end();
-                return;
-              }
-            } else if (kind === 'video' && apiJson.videoStreams && apiJson.videoStreams.length > 0) {
-              const bestVideo = apiJson.videoStreams.find(v => v.videoOnly === false) || apiJson.videoStreams[0];
-              if (bestVideo && bestVideo.url) {
-                console.log('[Backend] Stream fetch success via:', apiUrl);
-                downloadProgressMap[jobId] = { percent: 100, status: 'done' };
-                res.writeHead(302, { 'Location': bestVideo.url });
-                res.end();
-                return;
-              }
-            } else if (apiJson.adaptiveFormats || apiJson.formatStreams) {
-              // Invidious format parsing
-              if (kind === 'audio' && apiJson.adaptiveFormats) {
-                const audio = apiJson.adaptiveFormats.find(f => f.type?.includes('audio/mp4') || f.type?.includes('audio'));
-                if (audio && audio.url) {
-                  console.log('[Backend] Invidious audio stream success via:', apiUrl);
-                  downloadProgressMap[jobId] = { percent: 100, status: 'done' };
-                  res.writeHead(302, { 'Location': audio.url });
-                  res.end();
-                  return;
-                }
-              } else if (apiJson.formatStreams) {
-                const video = apiJson.formatStreams.find(f => f.qualityLabel?.includes('720p') || f.qualityLabel?.includes('360p')) || apiJson.formatStreams[0];
-                if (video && video.url) {
-                  console.log('[Backend] Invidious video stream success via:', apiUrl);
-                  downloadProgressMap[jobId] = { percent: 100, status: 'done' };
-                  res.writeHead(302, { 'Location': video.url });
-                  res.end();
-                  return;
-                }
-              }
-            }
-          } catch (instErr) {
-            console.warn('[Backend] Instance error:', apiUrl, instErr.message);
-          }
-        }
+      const targetUrl = await getStreamUrlFromPublicApi(videoUrl, kind, format);
+      if (targetUrl) {
+        console.log('[Backend] Stream fetch success via Ironclad Engine:', targetUrl);
+        downloadProgressMap[jobId] = { percent: 100, status: 'done' };
+        res.writeHead(302, { 'Location': targetUrl });
+        res.end();
+        return;
       }
     } catch (e) {
-      console.warn('[Backend] Multi-Instance Engine failed:', e.message);
+      console.warn('[Backend] Ironclad Engine failed:', e.message);
     }
 
     // 2차: Cobalt Open-Source API
