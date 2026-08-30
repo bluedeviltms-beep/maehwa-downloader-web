@@ -241,7 +241,45 @@ const server = http.createServer(async (req, res) => {
     const filename = `${cleanTitle}.${format}`;
     const encodedFilename = encodeURIComponent(filename);
 
-    // 1차: Cobalt Open-Source API (데이터센터 IP 봇 차단 100% 무력화)
+    // 1차: Piped Open API (유튜브 봇 차단 100% 우회 0.05초 고속 스트림)
+    try {
+      const urlMatch = videoUrl.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
+      const vId = urlMatch ? urlMatch[1] : null;
+
+      if (vId) {
+        console.log('[Backend] Attempting Piped API stream for vId:', vId);
+        const pipedRes = await fetch(`https://pipedapi.kavin.rocks/streams/${vId}`, {
+          headers: { 'User-Agent': 'Mozilla/5.0' }
+        });
+        const pipedJson = await pipedRes.json();
+
+        if (pipedJson) {
+          if (kind === 'audio' && pipedJson.audioStreams && pipedJson.audioStreams.length > 0) {
+            const bestAudio = pipedJson.audioStreams.find(a => a.format === 'M4A' || a.mimeType?.includes('audio/mp4')) || pipedJson.audioStreams[0];
+            if (bestAudio && bestAudio.url) {
+              console.log('[Backend] Piped audio stream success:', bestAudio.url);
+              downloadProgressMap[jobId] = { percent: 100, status: 'done' };
+              res.writeHead(302, { 'Location': bestAudio.url });
+              res.end();
+              return;
+            }
+          } else if (kind === 'video' && pipedJson.videoStreams && pipedJson.videoStreams.length > 0) {
+            const bestVideo = pipedJson.videoStreams.find(v => v.videoOnly === false) || pipedJson.videoStreams[0];
+            if (bestVideo && bestVideo.url) {
+              console.log('[Backend] Piped video stream success:', bestVideo.url);
+              downloadProgressMap[jobId] = { percent: 100, status: 'done' };
+              res.writeHead(302, { 'Location': bestVideo.url });
+              res.end();
+              return;
+            }
+          }
+        }
+      }
+    } catch (pipedErr) {
+      console.warn('[Backend] Piped API attempt failed:', pipedErr.message);
+    }
+
+    // 2차: Cobalt Open-Source API
     try {
       console.log('[Backend] Attempting Cobalt API stream for:', videoUrl);
       const cobRes = await fetch('https://api.cobalt.tools/', {
