@@ -17,6 +17,8 @@ function findYtDlpBinary() {
   const isWin = process.platform === 'win32';
   const localBin = path.join(__dirname, '..', 'resources', 'bin', isWin ? 'yt-dlp.exe' : 'yt-dlp');
   if (fs.existsSync(localBin)) return localBin;
+  if (fs.existsSync('/usr/local/bin/yt-dlp')) return '/usr/local/bin/yt-dlp';
+  if (fs.existsSync('/usr/bin/yt-dlp')) return '/usr/bin/yt-dlp';
   return 'yt-dlp';
 }
 
