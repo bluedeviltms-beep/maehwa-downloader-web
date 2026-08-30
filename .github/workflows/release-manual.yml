@@ -1,0 +1,27 @@
+# This workflow is optional: it's a reference example only.
+# You said you do manual uploads, so you don't have to enable this.
+name: Build (example)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+      - name: Install dependencies
+        run: npm ci
+      - name: Build renderer
+        run: npm run build:renderer
+      - name: Create distributable (no publish)
+        run: npm run dist -- --publish never
+      - name: Upload artifacts (example)
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-artifacts
+          path: dist/**

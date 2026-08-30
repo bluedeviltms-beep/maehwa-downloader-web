@@ -1,0 +1,82 @@
+{
+  "name": "maehwa-downloader-web",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PhilipJason/maehwa-downloader-app.git"
+  },
+  "version": "1.0.2",
+  "description": "MaeHwa personal YouTube downloader (skeleton)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "concurrently \"npm run start-proxy\" \"npm run dev:next\"",
+    "prepare:icon": "node scripts/copy-icon.js",
+    "prepare:sample-tone": "node scripts/generate-sample-tone.js",
+    "dev:next": "next dev renderer -p 3000",
+    "build:renderer": "next build renderer && node scripts/copy-out-to-public.js",
+    "install-yt-dlp": "node scripts/install-yt-dlp.js",
+    "dist": "electron-builder --win nsis --publish never && node scripts/organize-dist.js",
+    "generate:icon": "node scripts/generate-icon.js",
+    "start-proxy": "node -r dotenv/config proxy/server.js",
+    "dist:dir": "electron-builder --win dir --publish never",
+    "deploy": "npm run build:renderer && npx wrangler pages deploy public --project-name=maehwa-downloader"
+  },
+  "dependencies": {
+    "dotenv": "^16.0.0",
+    "electron-log": "^5.4.1",
+    "electron-updater": "^6.8.4",
+    "execa": "^7.0.0",
+    "googleapis": "^121.0.0",
+    "next": "^14.0.0",
+    "png-to-ico": "^3.0.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "ytdl-core": "^4.11.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "concurrently": "^8.1.0",
+    "electron": "^24.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "icon": "resources/maehwadownloader.ico",
+    "appId": "com.maehwa.downloader",
+    "productName": "MaeHwa Downloader",
+    "files": [
+      "**/*",
+      "resources/bin/**"
+    ],
+    "asarUnpack": [
+      "resources/bin/**"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "${productName}-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true
+    },
+    "extraResources": [
+      {
+        "from": "resources/bin",
+        "to": "bin",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "PhilipJason",
+        "repo": "maehwa-downloader-app"
+      }
+    ]
+  }
+}
