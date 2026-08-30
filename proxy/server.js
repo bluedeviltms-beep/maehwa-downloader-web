@@ -250,8 +250,8 @@ const server = http.createServer(async (req, res) => {
       '--newline',
       '--no-check-certificates',
       '--geo-bypass',
-      '--extractor-args', 'youtube:player_client=ios,android',
-      '--user-agent', 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      '--extractor-args', 'youtube:player_client=mweb,tv_embedded,android_vr',
+      '--user-agent', 'Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
       '-o', tempFile
     ];
 
