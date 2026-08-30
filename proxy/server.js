@@ -241,42 +241,76 @@ const server = http.createServer(async (req, res) => {
     const filename = `${cleanTitle}.${format}`;
     const encodedFilename = encodeURIComponent(filename);
 
-    // 1차: Piped Open API (유튜브 봇 차단 100% 우회 0.05초 고속 스트림)
+    // 1차: Multi-Instance Stream Engine (Piped/Invidious 인스턴스 다중 탐색 - 0.05초)
     try {
       const urlMatch = videoUrl.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
       const vId = urlMatch ? urlMatch[1] : null;
 
       if (vId) {
-        console.log('[Backend] Attempting Piped API stream for vId:', vId);
-        const pipedRes = await fetch(`https://pipedapi.kavin.rocks/streams/${vId}`, {
-          headers: { 'User-Agent': 'Mozilla/5.0' }
-        });
-        const pipedJson = await pipedRes.json();
+        console.log('[Backend] Attempting Multi-Instance Stream Engine for vId:', vId);
+        const instances = [
+          `https://pipedapi.kavin.rocks/streams/${vId}`,
+          `https://api.piped.video/streams/${vId}`,
+          `https://pipedapi.adminforge.de/streams/${vId}`,
+          `https://inv.tux.pizza/api/v1/videos/${vId}`
+        ];
 
-        if (pipedJson) {
-          if (kind === 'audio' && pipedJson.audioStreams && pipedJson.audioStreams.length > 0) {
-            const bestAudio = pipedJson.audioStreams.find(a => a.format === 'M4A' || a.mimeType?.includes('audio/mp4')) || pipedJson.audioStreams[0];
-            if (bestAudio && bestAudio.url) {
-              console.log('[Backend] Piped audio stream success:', bestAudio.url);
-              downloadProgressMap[jobId] = { percent: 100, status: 'done' };
-              res.writeHead(302, { 'Location': bestAudio.url });
-              res.end();
-              return;
+        for (const apiUrl of instances) {
+          try {
+            console.log('[Backend] Trying API:', apiUrl);
+            const apiRes = await fetch(apiUrl, {
+              headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+            });
+            if (!apiRes.ok) continue;
+            const apiJson = await apiRes.json();
+
+            if (kind === 'audio' && apiJson.audioStreams && apiJson.audioStreams.length > 0) {
+              const bestAudio = apiJson.audioStreams.find(a => a.format === 'M4A' || a.mimeType?.includes('audio/mp4')) || apiJson.audioStreams[0];
+              if (bestAudio && bestAudio.url) {
+                console.log('[Backend] Stream fetch success via:', apiUrl);
+                downloadProgressMap[jobId] = { percent: 100, status: 'done' };
+                res.writeHead(302, { 'Location': bestAudio.url });
+                res.end();
+                return;
+              }
+            } else if (kind === 'video' && apiJson.videoStreams && apiJson.videoStreams.length > 0) {
+              const bestVideo = apiJson.videoStreams.find(v => v.videoOnly === false) || apiJson.videoStreams[0];
+              if (bestVideo && bestVideo.url) {
+                console.log('[Backend] Stream fetch success via:', apiUrl);
+                downloadProgressMap[jobId] = { percent: 100, status: 'done' };
+                res.writeHead(302, { 'Location': bestVideo.url });
+                res.end();
+                return;
+              }
+            } else if (apiJson.adaptiveFormats || apiJson.formatStreams) {
+              // Invidious format parsing
+              if (kind === 'audio' && apiJson.adaptiveFormats) {
+                const audio = apiJson.adaptiveFormats.find(f => f.type?.includes('audio/mp4') || f.type?.includes('audio'));
+                if (audio && audio.url) {
+                  console.log('[Backend] Invidious audio stream success via:', apiUrl);
+                  downloadProgressMap[jobId] = { percent: 100, status: 'done' };
+                  res.writeHead(302, { 'Location': audio.url });
+                  res.end();
+                  return;
+                }
+              } else if (apiJson.formatStreams) {
+                const video = apiJson.formatStreams.find(f => f.qualityLabel?.includes('720p') || f.qualityLabel?.includes('360p')) || apiJson.formatStreams[0];
+                if (video && video.url) {
+                  console.log('[Backend] Invidious video stream success via:', apiUrl);
+                  downloadProgressMap[jobId] = { percent: 100, status: 'done' };
+                  res.writeHead(302, { 'Location': video.url });
+                  res.end();
+                  return;
+                }
+              }
             }
-          } else if (kind === 'video' && pipedJson.videoStreams && pipedJson.videoStreams.length > 0) {
-            const bestVideo = pipedJson.videoStreams.find(v => v.videoOnly === false) || pipedJson.videoStreams[0];
-            if (bestVideo && bestVideo.url) {
-              console.log('[Backend] Piped video stream success:', bestVideo.url);
-              downloadProgressMap[jobId] = { percent: 100, status: 'done' };
-              res.writeHead(302, { 'Location': bestVideo.url });
-              res.end();
-              return;
-            }
+          } catch (instErr) {
+            console.warn('[Backend] Instance error:', apiUrl, instErr.message);
           }
         }
       }
-    } catch (pipedErr) {
-      console.warn('[Backend] Piped API attempt failed:', pipedErr.message);
+    } catch (e) {
+      console.warn('[Backend] Multi-Instance Engine failed:', e.message);
     }
 
     // 2차: Cobalt Open-Source API
