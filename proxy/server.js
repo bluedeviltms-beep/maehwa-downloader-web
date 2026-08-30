@@ -25,7 +25,7 @@ function findYtDlpBinary() {
 function cleanupOldTempFiles() {
   const tmpDir = os.tmpdir();
   const now = Date.now();
-  const MAX_AGE_MS = 20 * 60 * 1000; // 20 minutes
+  const MAX_AGE_MS = 20 * 60 * 1000;
 
   try {
     const files = fs.readdirSync(tmpDir);
@@ -36,7 +36,6 @@ function cleanupOldTempFiles() {
           const stat = fs.statSync(filePath);
           if (now - stat.mtimeMs > MAX_AGE_MS) {
             fs.unlinkSync(filePath);
-            console.log(`[Clean] Deleted stale temp file: ${file}`);
           }
         } catch (e) {}
       }
@@ -44,7 +43,6 @@ function cleanupOldTempFiles() {
   } catch (e) {}
 }
 
-// Periodic cleanup every 10 minutes
 setInterval(cleanupOldTempFiles, 10 * 60 * 1000);
 
 async function fetchVideoViewCounts(videoIds) {
@@ -83,87 +81,14 @@ function decodeHTMLEntities(text) {
     .replace(/&gt;/g, '>')
     .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(Number(dec)))
     .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
-async function getStreamUrlFromPublicApi(videoUrl, kind, format) {
-  const urlMatch = videoUrl.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
-  const videoId = urlMatch ? urlMatch[1] : null;
-
-  // 1. Try Cobalt API v10
-  try {
-    const cobRes = await fetch('https://api.cobalt.tools/', {
-      method: 'POST',
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-      },
-      body: JSON.stringify({
-        url: videoUrl,
-        downloadMode: kind === 'audio' ? 'audio' : 'auto',
-        audioFormat: format === 'mp3' ? 'mp3' : 'm4a',
-        youtubeVideoCodec: 'h264'
-      })
-    });
-    const cobJson = await cobRes.json();
-    console.log('[Cobalt v10] Response:', cobJson);
-    if (cobJson && cobJson.url) return cobJson.url;
-    if (cobJson && cobJson.picker && cobJson.picker[0]?.url) return cobJson.picker[0].url;
-  } catch (e) {
-    console.warn('[Cobalt v10] Failed:', e.message);
-  }
-
-  // 2. Try Invidious & Piped Public Instances
-  if (videoId) {
-    const instances = [
-      `https://inv.tux.pizza/api/v1/videos/${videoId}`,
-      `https://invidious.nerdvpn.de/api/v1/videos/${videoId}`,
-      `https://pipedapi.kavin.rocks/streams/${videoId}`,
-      `https://api.piped.video/streams/${videoId}`
-    ];
-
-    for (const instUrl of instances) {
-      try {
-        const res = await fetch(instUrl, {
-          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-        });
-        if (!res.ok) continue;
-        const data = await res.json();
-
-        // Invidious formats
-        if (data.adaptiveFormats || data.formatStreams) {
-          if (kind === 'audio' && data.adaptiveFormats) {
-            const audio = data.adaptiveFormats.find(f => f.type?.includes('audio/mp4') || f.type?.includes('audio'));
-            if (audio && audio.url) return audio.url;
-          }
-          if (kind === 'video' && data.formatStreams) {
-            const video = data.formatStreams.find(f => f.qualityLabel?.includes('720p') || f.qualityLabel?.includes('360p')) || data.formatStreams[0];
-            if (video && video.url) return video.url;
-          }
-        }
-
-        // Piped formats
-        if (data.audioStreams && kind === 'audio') {
-          const audio = data.audioStreams.find(a => a.format === 'M4A' || a.mimeType?.includes('audio/mp4')) || data.audioStreams[0];
-          if (audio && audio.url) return audio.url;
-        }
-        if (data.videoStreams && kind === 'video') {
-          const video = data.videoStreams.find(v => v.videoOnly === false) || data.videoStreams[0];
-          if (video && video.url) return video.url;
-        }
-      } catch (e) {
-        console.warn('[Instance] Failed:', instUrl, e.message);
-      }
-    }
-  }
-
-  return null;
 }
 
 const server = http.createServer(async (req, res) => {
-  // simple CORS + routing
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length');
+
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
     res.end();
@@ -222,16 +147,12 @@ const server = http.createServer(async (req, res) => {
         try {
           const statsMap = await fetchVideoViewCounts(ids);
           items.forEach((it) => {
-            if (it.videoId && statsMap[it.videoId] != null) {
-              it.viewCount = statsMap[it.videoId];
-            }
+            if (statsMap[it.videoId] !== undefined) it.viewCount = statsMap[it.videoId];
           });
-        } catch (statsErr) {
-          console.warn('proxy search stats failed:', statsErr);
-        }
+        } catch (e) {}
       }
 
-      res.writeHead(r.status, { 'Content-Type': 'application/json' });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, items }));
     } catch (e) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -240,9 +161,9 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (parsed.pathname === '/api/video') {
-    const id = parsed.query.id || parsed.query.videoId;
-    if (!id) {
+  if (parsed.pathname === '/api/details') {
+    const videoId = parsed.query.videoId || parsed.query.id;
+    if (!videoId) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'missing videoId' }));
       return;
@@ -250,7 +171,7 @@ const server = http.createServer(async (req, res) => {
 
     const params = new URLSearchParams({
       part: 'snippet,contentDetails,statistics',
-      id: String(id),
+      id: String(videoId),
       key: API_KEY,
     });
 
@@ -259,10 +180,11 @@ const server = http.createServer(async (req, res) => {
       const json = await r.json();
       const it = (json.items || [])[0];
       if (!it) {
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Video not found' }));
+        res.writeHead(440, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: '영상을 찾을 수 없습니다.' }));
         return;
       }
+
       const details = {
         videoId: it.id,
         title: decodeHTMLEntities(it.snippet?.title || ''),
@@ -314,79 +236,34 @@ const server = http.createServer(async (req, res) => {
     const filename = `${cleanTitle}.${format}`;
     const encodedFilename = encodeURIComponent(filename);
 
-    // 1차: 철통 무적 Multi-API Stream Engine (Cobalt v10 + Invidious + Piped)
-    try {
-      const targetUrl = await getStreamUrlFromPublicApi(videoUrl, kind, format);
-      if (targetUrl) {
-        console.log('[Backend] Stream fetch success via Ironclad Engine:', targetUrl);
-        downloadProgressMap[jobId] = { percent: 100, status: 'done' };
-        res.writeHead(302, { 'Location': targetUrl });
-        res.end();
-        return;
-      }
-    } catch (e) {
-      console.warn('[Backend] Ironclad Engine failed:', e.message);
-    }
-
-    // 2차: Cobalt Open-Source API
-    try {
-      console.log('[Backend] Attempting Cobalt API stream for:', videoUrl);
-      const cobRes = await fetch('https://api.cobalt.tools/', {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          url: videoUrl,
-          downloadMode: kind === 'audio' ? 'audio' : 'auto',
-          audioFormat: format === 'mp3' ? 'mp3' : 'm4a',
-          youtubeVideoCodec: 'h264'
-        })
-      });
-
-      const cobJson = await cobRes.json();
-      console.log('[Backend] Cobalt response:', cobJson);
-
-      const targetUrl = cobJson?.url || (cobJson?.picker && cobJson.picker[0]?.url);
-      if (targetUrl) {
-        downloadProgressMap[jobId] = { percent: 100, status: 'done' };
-        res.writeHead(302, { 'Location': targetUrl });
-        res.end();
-        return;
-      }
-    } catch (e) {
-      console.warn('[Backend] Cobalt API primary attempt failed:', e.message);
-    }
-
-    // 2차: yt-dlp 파이프라인
     const ytDlp = findYtDlpBinary();
-
     const tempFile = path.join(os.tmpdir(), `maehwa_${Date.now()}_${Math.floor(Math.random()*10000)}.${format}`);
 
+    // Android/iOS 플레이어 클라이언트 우회: 데이터센터 IP에서도 쿠키 없이 통과
     const args = [
-      '--no-playlist',
-      '--newline',
+      '--no-playlist', '--newline', '-o', tempFile,
+      '--extractor-args', 'youtube:player_client=android,ios,tv_embedded',
+      '--add-header', 'User-Agent:com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip',
       '--no-check-certificates',
-      '--geo-bypass',
-      '--extractor-args', 'youtube:player_client=mweb,tv_embedded,android_vr',
-      '--user-agent', 'Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
-      '-o', tempFile
     ];
 
     if (kind === 'audio') {
-      args.push('-x', '--audio-format', format === 'mp3' ? 'mp3' : 'm4a');
+      if (format === 'mp3') {
+        args.push('-x', '--audio-format', 'mp3', '--audio-quality', '0');
+      } else {
+        args.push('-f', 'ba[ext=m4a]/ba/bestaudio');
+      }
     } else {
       let formatSpec = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best';
       if (quality === '1080p') {
-        formatSpec = 'bestvideo[height<=1080]+bestaudio/best';
+        formatSpec = 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best';
       } else if (quality === '720p') {
-        formatSpec = 'bestvideo[height<=720]+bestaudio/best';
+        formatSpec = 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]/best';
       } else if (quality === '480p') {
-        formatSpec = 'bestvideo[height<=480]+bestaudio/best';
+        formatSpec = 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480]/best';
       }
       args.push('-f', formatSpec);
-      args.push('--merge-output-format', 'mp4');
+      args.push('--merge-output-format', format);
     }
     args.push(videoUrl);
 
@@ -403,55 +280,22 @@ const server = http.createServer(async (req, res) => {
         if (match && match[1]) {
           const p = Math.min(95, Math.round(parseFloat(match[1])));
           downloadProgressMap[jobId] = { percent: p, status: 'downloading' };
-        } else if (line.includes('[Merger]') || line.includes('Merging') || line.includes('[ExtractAudio]')) {
-          downloadProgressMap[jobId] = { percent: 97, status: 'processing' };
+        } else if (line.includes('[Merger]') || line.includes('Merging')) {
+          downloadProgressMap[jobId] = { percent: 97, status: 'merging' };
         }
       }
     });
 
     child.stderr.on('data', (d) => {
-      const msg = d.toString();
-      stderrLogs += msg;
-      console.log('yt-dlp err:', msg);
+      stderrLogs += d.toString();
     });
 
     const finishDownload = () => {
       activeDownloadsCount = Math.max(0, activeDownloadsCount - 1);
     };
 
-    child.on('close', async (code) => {
+    child.on('close', (code) => {
       if (code !== 0 || !fs.existsSync(tempFile)) {
-        console.warn('yt-dlp failed (datacenter IP block). Attempting Cobalt API fallback for:', videoUrl);
-        try {
-          const cobaltRes = await fetch('https://api.cobalt.tools/', {
-            method: 'POST',
-            headers: {
-              'Accept': 'application/json',
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              url: videoUrl,
-              downloadMode: kind === 'audio' ? 'audio' : 'auto',
-              audioFormat: format === 'mp3' ? 'mp3' : 'm4a',
-              youtubeVideoCodec: 'h264'
-            })
-          });
-          const cobaltJson = await cobaltRes.json();
-          if (cobaltJson && cobaltJson.url) {
-            console.log('Cobalt fallback success:', cobaltJson.url);
-            downloadProgressMap[jobId] = { percent: 100, status: 'done' };
-            finishDownload();
-            if (!res.headersSent) {
-              res.writeHead(302, { 'Location': cobaltJson.url });
-              res.end();
-            }
-            return;
-          }
-        } catch (cobaltErr) {
-          console.error('Cobalt fallback failed:', cobaltErr);
-        }
-
-        console.error('yt-dlp download failed with code:', code, 'stderr:', stderrLogs);
         downloadProgressMap[jobId] = { percent: 0, status: 'error' };
         finishDownload();
         if (!res.headersSent) {
@@ -483,12 +327,6 @@ const server = http.createServer(async (req, res) => {
       });
     });
 
-    return;
-  }
-
-  if (parsed.pathname === '/api/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, time: new Date().toISOString() }));
     return;
   }
 

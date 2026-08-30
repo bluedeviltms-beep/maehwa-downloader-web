@@ -1,6 +1,6 @@
 /**
  * MaeHwa Downloader Engine
- * Uses backend proxy (yt-dlp + FFmpeg) for 100% reliable high-quality downloads.
+ * Uses local backend proxy (yt-dlp + FFmpeg) for 100% reliable high-quality downloads.
  */
 
 import { getApiUrl } from './api'
@@ -13,9 +13,9 @@ export async function downloadClientSideDirect({ url, title, kind, format, quali
 
   const downloadUrl = getApiUrl(`/api/download?url=${encodeURIComponent(url)}&kind=${kind}&format=${fileExt}&quality=${quality || 'highest'}&title=${encodeURIComponent(safeTitle)}`)
 
-  if (onProgress) onProgress(50, '서버에서 고속 미디어 파일 수신 시작...')
+  if (onProgress) onProgress(40, '미디어 병합 및 스트리밍 다운로드 시작...')
 
-  // Prevent main page URL redirection by using hidden iframe download trigger
+  // Trigger silent browser download via hidden iframe
   let iframe = document.getElementById('maehwa_hidden_download_iframe')
   if (!iframe) {
     iframe = document.createElement('iframe')
