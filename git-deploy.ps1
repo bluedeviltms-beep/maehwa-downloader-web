@@ -11,4 +11,4 @@ if (!(Test-Path '.git')) {
 & $git branch -M main
 & $git add .
 & $git commit -m "Deploy Render backend configuration"
-& $git push -u origin main --force
+& $git -c credential.helper= manager-core push -u origin main --force
