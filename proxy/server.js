@@ -95,6 +95,13 @@ const server = http.createServer(async (req, res) => {
   }
 
   const parsed = url.parse(req.url, true);
+
+  if (parsed.pathname === '/' || parsed.pathname === '/api/ping') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, status: 'online', service: 'maehwa-downloader-proxy' }));
+    return;
+  }
+
   if (parsed.pathname === '/api/search') {
     const q = parsed.query.q || parsed.query.query;
     if (!q) {

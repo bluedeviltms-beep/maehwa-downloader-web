@@ -3,11 +3,14 @@ export const YOUTUBE_API_KEY = process.env.NEXT_PUBLIC_YOUTUBE_API_KEY || proces
 export function getApiUrl(path = '') {
   const cleanPath = path.startsWith('/') ? path : `/${path}`
   
-  if (typeof process !== 'undefined' && process.env && process.env.NEXT_PUBLIC_API_URL) {
-    return `${process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, '')}${cleanPath}`
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      return `http://localhost:3001${cleanPath}`
+    }
   }
 
-  return `http://localhost:3001${cleanPath}`
+  return `https://maehwa-backend.onrender.com${cleanPath}`
 }
 
 export function decodeHTMLEntities(text) {
