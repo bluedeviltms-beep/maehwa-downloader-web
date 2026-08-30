@@ -1,5 +1,8 @@
 $git = 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\Common7\IDE\CommonExtensions\Microsoft\TeamFoundation\Team Explorer\Git\cmd\git.exe'
 
+cmdkey /delete:LegacyGeneric:target=git:https://github.com 2>$null
+cmdkey /delete:git:https://github.com 2>$null
+
 & $git config user.email "bluedeviltms@gmail.com"
 & $git config user.name "bluedeviltms-beep"
 
